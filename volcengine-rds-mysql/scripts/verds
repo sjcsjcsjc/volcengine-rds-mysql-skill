@@ -1,0 +1,210 @@
+#!/usr/bin/env sh
+# verds — 火山引擎 RDS MySQL Skill 的唯一执行入口
+#
+# 职责：
+#   1. 定位 ve CLI：PATH 优先 → 本地缓存 → 首次自举下载（带 sha256 校验）
+#   2. 写/毁灭类操作强制 --confirm 护栏，读操作直接放行
+#   3. 透传到 `ve rdsmysqlv2 <Action> ...`（2022-01-01 API；禁用 2018-01-01 的 rds_mysql）
+#
+# 用法：
+#   ./verds <Action> [--Param value ...] [---region <r>] [---profile <p>]
+#   ./verds --confirm <WriteAction> ...        # 写操作确认后执行
+#   ./verds --actions                          # 列出全部真实 Action（等价 ve rdsmysqlv2 --help）
+#
+# 凭证由 ve 自行解析（推荐 SSO / console-login，见 SKILL.md）；本脚本从不读取或打印任何凭证。
+#
+# 可选环境变量：
+#   VERDS_VE_VERSION                 覆盖默认下载的 ve 版本
+#   VOLCENGINE_CLI_DOWNLOAD_BASE_URL 覆盖二进制下载源（默认火山官方 CDN）
+#   VERDS_SKIP_CACHE_VERIFY=1        跳过缓存命中时的完整性校验（不推荐）
+
+set -eu
+
+VE_VERSION="${VERDS_VE_VERSION:-1.0.48}"
+# 火山官方 ve 的 MySQL 服务名。固定使用 2022-01-01 的 rdsmysqlv2；
+# 禁用 2018-01-01 的老服务 rds_mysql（动作面残缺，缺 ModifyDBInstanceSpec / 维护窗口等）。
+SVC="${VERDS_SVC:-rdsmysqlv2}"
+BASE_URL="${VOLCENGINE_CLI_DOWNLOAD_BASE_URL:-https://cloudcache.volccdn.com/ve}"
+# 去掉 BASE_URL 尾部斜杠
+BASE_URL="${BASE_URL%/}"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/volcengine-rds-skill"
+VE_BIN="$CACHE_DIR/ve"
+MANUAL_HINT="请手动安装 ve 后重试：npm i -g @volcengine/cli  （或见 https://github.com/volcengine/volcengine-cli/releases）"
+
+log() { printf '%s\n' "$*" >&2; }
+
+die() { log "$@"; exit 1; }
+
+# ---------------------------------------------------------------------------
+# sha256：优先 sha256sum，回退 shasum -a 256
+# ---------------------------------------------------------------------------
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    die "[verds] 缺少 sha256sum / shasum，无法校验完整性。$MANUAL_HINT"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# 判断 os/arch，拼出官方归档名（映射规则对齐 volcengine-cli/build.sh 与 npm/install.js）
+# 结果写入全局 TARGET
+# ---------------------------------------------------------------------------
+detect_target() {
+  _os="$(uname -s)"
+  _arch="$(uname -m)"
+  case "$_os" in
+    Darwin) _os="darwin" ;;
+    Linux)  _os="linux" ;;
+    *) die "[verds] 不支持的操作系统: $_os。$MANUAL_HINT" ;;
+  esac
+  case "$_arch" in
+    x86_64|amd64)  _arch="amd64" ;;
+    aarch64|arm64) _arch="arm64" ;;
+    i386|i686)     _arch="386" ;;
+    armv6l|armv7l) _arch="arm" ;;
+    *) die "[verds] 不支持的 CPU 架构: $_arch。$MANUAL_HINT" ;;
+  esac
+  TARGET="${_os}_${_arch}"
+}
+
+# ---------------------------------------------------------------------------
+# 从官方 CDN 下载 ve.zip，校验 sha256，解包到缓存目录
+# ---------------------------------------------------------------------------
+bootstrap_ve() {
+  command -v curl >/dev/null 2>&1 || die "[verds] 缺少 curl，无法下载 ve。$MANUAL_HINT"
+  command -v unzip >/dev/null 2>&1 || die "[verds] 缺少 unzip，无法解包 ve。$MANUAL_HINT"
+
+  detect_target
+  archive="volcengine-cli_${VE_VERSION}_${TARGET}.zip"
+  url="$BASE_URL/v${VE_VERSION}/$archive"
+  sums_url="$BASE_URL/v${VE_VERSION}/volcengine-cli_${VE_VERSION}_SHA256SUMS"
+
+  tmp="$(mktemp -d)"
+  # 仅清理本次的临时目录
+  trap 'rm -rf "$tmp"' EXIT INT TERM
+
+  log "[verds] 未发现 ve，正在从官方 CDN 下载 $archive ..."
+  curl -fsSL "$url" -o "$tmp/$archive" \
+    || die "[verds] 下载失败: $url。$MANUAL_HINT"
+  curl -fsSL "$sums_url" -o "$tmp/SHA256SUMS" \
+    || die "[verds] 无法获取校验清单: $sums_url。$MANUAL_HINT"
+
+  expected="$(awk -v f="$archive" '$2 == f || $2 == "*"f {print $1}' "$tmp/SHA256SUMS" | head -n1)"
+  [ -n "$expected" ] || die "[verds] 校验清单中缺少 $archive 的条目，拒绝执行。$MANUAL_HINT"
+
+  actual="$(sha256_of "$tmp/$archive")"
+  if [ "$expected" != "$actual" ]; then
+    log "[verds] sha256 校验失败，归档可能被篡改，已拒绝执行："
+    log "        expected=$expected"
+    log "        actual  =$actual"
+    die "$MANUAL_HINT"
+  fi
+
+  unzip -oq "$tmp/$archive" -d "$tmp" || die "[verds] 解包失败。$MANUAL_HINT"
+  [ -f "$tmp/ve" ] || die "[verds] 归档中未找到 ve 可执行文件。$MANUAL_HINT"
+
+  mkdir -p "$CACHE_DIR"
+  # 记录期望 hash，供缓存命中时二次校验（fail-closed）
+  printf '%s' "$(sha256_of "$tmp/ve")" > "$CACHE_DIR/ve.sha256"
+  cp "$tmp/ve" "$VE_BIN"
+  chmod +x "$VE_BIN"
+  [ "$(uname -s)" = "Darwin" ] && xattr -d com.apple.quarantine "$VE_BIN" 2>/dev/null || true
+
+  rm -rf "$tmp"
+  trap - EXIT INT TERM
+  log "[verds] ve v$VE_VERSION 已安装至 $VE_BIN"
+}
+
+# ---------------------------------------------------------------------------
+# 缓存命中时校验二进制未被替换；不通过则重新下载（fail-closed）
+# ---------------------------------------------------------------------------
+verify_cached_ve() {
+  [ "${VERDS_SKIP_CACHE_VERIFY:-0}" = "1" ] && return 0
+  [ -f "$CACHE_DIR/ve.sha256" ] || { log "[verds] 缓存缺少校验基线，重新下载。"; return 1; }
+  want="$(cat "$CACHE_DIR/ve.sha256")"
+  got="$(sha256_of "$VE_BIN")"
+  [ "$want" = "$got" ] && return 0
+  log "[verds] 缓存的 ve 完整性校验失败，将重新下载。"
+  return 1
+}
+
+# ---------------------------------------------------------------------------
+# 定位 ve：PATH > 缓存(校验) > 下载
+# ---------------------------------------------------------------------------
+resolve_ve() {
+  if command -v ve >/dev/null 2>&1; then
+    VE_BIN="$(command -v ve)"
+    return
+  fi
+  if [ -x "$VE_BIN" ] && verify_cached_ve; then
+    return
+  fi
+  rm -f "$VE_BIN" 2>/dev/null || true
+  bootstrap_ve
+}
+
+# ---------------------------------------------------------------------------
+# 护栏：按 Action 名前缀分级。读放行；写/毁灭需 --confirm
+# ---------------------------------------------------------------------------
+guard() {
+  action="$1"
+  case "$action" in
+    Describe*|List*|-h|--help) return ;;   # 只读，放行
+  esac
+
+  # 查帮助是只读意图：任意位置带 --help/-h 均放行（如 `ModifyXxx --help`）
+  for _arg in "$@"; do
+    case "$_arg" in
+      --help|-h) return ;;
+    esac
+  done
+
+  # 其余均视为写/变更类
+  [ "$CONFIRMED" = "1" ] && return
+
+  case "$action" in
+    Delete*|Restart*|Reset*|Recovery*|Restore*|Rebuild*|Stop*|Disassociate*|Switch*|Migrate*|Upgrade*DBInstanceEngineMajorVersion)
+      level="⚠️  高危操作（可能造成数据丢失或服务中断）" ;;
+    *)
+      level="✋ 写操作（将变更云上资源）" ;;
+  esac
+
+  log "=================================================================="
+  log "$level"
+  log "  Action : $action"
+  log "  完整命令: ve $SVC $*"
+  log ""
+  log "  该操作会修改火山引擎线上资源。生产环境请先确认已备份，"
+  log "  或在测试环境验证。确认无误后，在命令最前面加 --confirm 重试："
+  log "      verds --confirm $*"
+  log "=================================================================="
+  exit 2
+}
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+CONFIRMED=0
+if [ "${1:-}" = "--confirm" ]; then
+  CONFIRMED=1
+  shift
+fi
+
+if [ $# -eq 0 ]; then
+  log "用法: verds [--confirm] <Action> [--Param value ...] [---region <r>] [---profile <p>]"
+  log "      verds --actions        # 列出全部支持的 Action"
+  exit 1
+fi
+
+# --actions：列出真实 action 列表（权威来源）
+if [ "${1:-}" = "--actions" ]; then
+  resolve_ve
+  exec "$VE_BIN" "$SVC" --help
+fi
+
+resolve_ve
+guard "$@"
+exec "$VE_BIN" "$SVC" "$@"

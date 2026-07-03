@@ -1,0 +1,24 @@
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
+._*
+
+# ve CLI 运行时缓存
+.cache/
+volcengine-rds-skill/
+ve
+*.sha256
+
+# 打包产物
+dist/
+*.zip
+*.tar.gz
+
+# 内部文件（绝不对外发布）
+AGENTS.md
+.trae/
+._agent/
+
+# 火山官方 CLI 源码（独立仓库，非本 skill 的一部分）
+volcengine-cli/
