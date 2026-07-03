@@ -2,7 +2,7 @@
 name: volcengine-rds-mysql
 description: 火山引擎 RDS MySQL 智能运维代理。当用户需要查询或管理火山引擎云数据库 MySQL —— 包括实例（列表/详情/创建/规格变更/重启/删除）、数据库、账号与授权、参数与参数模板、白名单、备份与恢复、VPC/子网/可用区等网络资源 —— 时使用。通过内置脚本 ./scripts/verds 调用火山官方 ve CLI 获取实时结果；脚本会自动就绪 ve（无需预装），并对写/高危操作强制二次确认。
 license: Apache-2.0
-metadata: {"clawdbot":{"emoji":"🗄️","version":"1.0.0","homepage":"https://www.volcengine.com/product/rds-mysql","requires":{"bins":["curl","unzip"],"env":[]},"os":["darwin","linux"]},"openclaw":{"emoji":"🗄️","version":"1.0.0","homepage":"https://www.volcengine.com/product/rds-mysql","requires":{"bins":["curl","unzip"],"env":[]},"os":["darwin","linux"]},"moltbot":{"emoji":"🗄️","version":"1.0.0","homepage":"https://www.volcengine.com/product/rds-mysql","requires":{"bins":["curl","unzip"],"env":[]},"os":["darwin","linux"]}}
+metadata: {"clawdbot":{"emoji":"🗄️","version":"1.0.1","homepage":"https://www.volcengine.com/product/rds-mysql","requires":{"bins":["curl","unzip"],"env":[]},"os":["darwin","linux"]},"openclaw":{"emoji":"🗄️","version":"1.0.1","homepage":"https://www.volcengine.com/product/rds-mysql","requires":{"bins":["curl","unzip"],"env":[]},"os":["darwin","linux"]},"moltbot":{"emoji":"🗄️","version":"1.0.1","homepage":"https://www.volcengine.com/product/rds-mysql","requires":{"bins":["curl","unzip"],"env":[]},"os":["darwin","linux"]}}
 ---
 
 # 火山引擎 RDS MySQL 运维代理
@@ -78,7 +78,7 @@ v2 的规格变配、重启、可用区迁移等支持选择执行时机，用 `
 
 可维护时间窗口本身用 `ModifyDBInstanceMaintenanceWindow --InstanceId ... --MaintenanceTime 03:00Z-06:00Z` 修改。
 
-**规格 / 存储变配用 `ModifyDBNodeSpec`**（老接口 `ModifyDBInstanceSpec` 已弃用，不认云盘规格名如 `rds.mysql.c.s.*`，会报 `NodeInfo.NodeSpec值无效`）。关键约定：`NodeInfo` 每个节点**必须带 `ZoneId`**；主备节点都要列出；**先用 `EstimateOnly:true` 干跑预校验**（不下单，返回影响与库存），通过再正式提交：
+**规格 / 存储变配用 [`ModifyDBNodeSpec`](https://www.volcengine.com/docs/6313/1359332)**（老接口 [`ModifyDBInstanceSpec` 官方已弃用](https://www.volcengine.com/docs/6313/170651)，不认云盘规格名如 `rds.mysql.c.s.*`，会报 `NodeInfo.NodeSpec值无效`）。关键约定：`NodeInfo` 每个节点**必须带 `ZoneId`**；主备节点都要列出；**先用 `EstimateOnly:true` 干跑预校验**（不下单，返回影响与库存），通过再正式提交：
 
 ```bash
 # 第 1 步：干跑预校验（EstimateOnly:true，不下单）——先查节点 ID/可用区：DescribeDBInstanceDetail

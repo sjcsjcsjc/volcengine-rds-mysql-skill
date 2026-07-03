@@ -5,6 +5,12 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.1] - 2026-07-03
+
+### Added
+- `references/actions.md` 新增「官方 API 文档（权威源）」索引小节，列出核心 Action 的火山官网文档链接。
+- 变配相关 Action（`ModifyDBNodeSpec`、已弃用的 `ModifyDBInstanceSpec`）在表格与 SKILL.md 中补充行内官方文档链接，便于核对参数与弃用说明。
+
 ## [1.0.0] - 2026-07-03
 
 首个对外发布版本。

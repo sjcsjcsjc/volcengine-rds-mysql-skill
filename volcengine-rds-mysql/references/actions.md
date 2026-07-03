@@ -12,6 +12,23 @@
 > ```
 > 参数名区分大小写，形如 `--InstanceId mysql-xxx`；固定参数用三横线 `---region` / `---profile` / `---endpoint`。
 
+## 官方 API 文档（权威源）
+
+参数细节以火山官方文档为准（本表是运维视角的速查 + 避坑，非逐参数罗列）。核心 Action 文档：
+
+| Action | 官方文档 |
+|--------|---------|
+| `CreateDBInstance`（创建实例） | https://www.volcengine.com/docs/6313/170648 |
+| `ModifyDBNodeSpec`（变更节点规格/存储，**主推**） | https://www.volcengine.com/docs/6313/1359332 |
+| `CreateDBNodes`（增加节点） | https://www.volcengine.com/docs/6313/1359331 |
+| `DeleteDBNodes`（删除节点） | https://www.volcengine.com/docs/6313/1359333 |
+| `ModifyDBInstanceSpec`（**已弃用**，见弃用说明） | https://www.volcengine.com/docs/6313/170651 |
+| `ModifyDBInstanceMaintenanceWindow`（可维护窗口） | https://www.volcengine.com/docs/6313/1131818 |
+| `DescribeDBInstanceDetail`（实例详情/查节点与窗口） | https://www.volcengine.com/docs/6313/170653 |
+| `DescribeAvailabilityZones`（可用区） | https://www.volcengine.com/docs/6313/170645 |
+| 产品规格（规格名对照） | https://www.volcengine.com/docs/6313/74505 |
+| 错误码 | https://www.volcengine.com/docs/6313/170700 |
+
 ## v1 → v2 关键改名（老习惯请更正）
 
 | 老（2018-01-01，已禁用） | 新（2022-01-01，rdsmysqlv2） |
@@ -66,7 +83,7 @@ v2 支持把变配/重启等放到「可维护时间窗口」执行，这是 v1 
 
 ### 变配避坑（实操教训，务必先读）
 
-规格 / 存储变配统一用 **`ModifyDBNodeSpec`**（老接口 `ModifyDBInstanceSpec` 已弃用）。以下是实操中真实踩过的坑：
+规格 / 存储变配统一用 **[`ModifyDBNodeSpec`](https://www.volcengine.com/docs/6313/1359332)**（老接口 [`ModifyDBInstanceSpec` 官方已弃用](https://www.volcengine.com/docs/6313/170651)）。以下是实操中真实踩过的坑：
 
 1. **先干跑，再下单**：`ModifyDBNodeSpec` 支持 `"EstimateOnly":true`——**不下单**，仅校验参数并返回影响与库存。干跑通过（返回 `EstimationResult`，其 `Plans` 如 `RebuildPrimary`/`RebuildSecondary`、`Effects` 如 `ReadWriteConnectionTransientError`；`OrderId` 为空）后，再去掉 `EstimateOnly` 正式提交。**变配前一律先干跑。**
 2. **`NodeInfo` 每个节点必须带 `ZoneId`**：否则报 `nodeInfo.ZoneId值无效`。节点的 `NodeId` / `ZoneId` 从 `DescribeDBInstanceDetail` 的 `NodeDetailInfo` 取。主备节点都要列出。
@@ -151,8 +168,8 @@ v2 支持把变配/重启等放到「可维护时间窗口」执行，这是 v1 
 ### 实例规格 / 节点 / 类型（含 SwitchType）
 | 中文意图 | Action | 关键参数 |
 |---------|--------|---------|
-| **变更节点规格 / 存储（主推）** | `ModifyDBNodeSpec` | `--InstanceId` `--NodeInfo`(array，每节点含 `NodeId`/`NodeType`/`NodeSpec`/`NodeOperateType`/**`ZoneId`**) `--StorageSpace` `--StorageType` `--SwitchType` `--EstimateOnly`（干跑预校验，见下节） |
-| ~~变更实例配置（规格/存储）~~ | ~~`ModifyDBInstanceSpec`~~ **已弃用** | 官方已弃用，不认云盘规格名 `rds.mysql.c.s.*`（报 `NodeInfo.NodeSpec值无效`）。请改用 `ModifyDBNodeSpec` |
+| **变更节点规格 / 存储（主推）** | [`ModifyDBNodeSpec`](https://www.volcengine.com/docs/6313/1359332) | `--InstanceId` `--NodeInfo`(array，每节点含 `NodeId`/`NodeType`/`NodeSpec`/`NodeOperateType`/**`ZoneId`**) `--StorageSpace` `--StorageType` `--SwitchType` `--EstimateOnly`（干跑预校验，见下节） |
+| ~~变更实例配置（规格/存储）~~ | ~~[`ModifyDBInstanceSpec`](https://www.volcengine.com/docs/6313/170651)~~ **已弃用** | 官方已弃用，不认云盘规格名 `rds.mysql.c.s.*`（报 `NodeInfo.NodeSpec值无效`）。请改用 `ModifyDBNodeSpec` |
 | 临时升配 | `ModifyDBNodeTemporarySpec` | `--InstanceId` `--NodeInfo` |
 | 修改实例类型（单/双/多节点） | `ModifyDBInstanceType` | `--InstanceId` `--NodeInfo` `--TypeConvertPath`；`--SwitchType` |
 | 增加节点 | `CreateDBNodes` | `--InstanceId` `--NodeInfo` |
